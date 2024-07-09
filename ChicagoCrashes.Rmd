@@ -1,0 +1,280 @@
+---
+title: "FinalEDA"
+author: "Aayush Verma"
+date: "2024-05-06"
+output: html_document
+---
+
+```{r setup}
+require('tseries')
+require('forecast')
+library(lubridate)
+require('TSA')
+require('prophet')
+require('vars')
+```
+
+```{r}
+df <- read.csv('trafficCrashesMerged.csv')
+df[1,'CRASH_DATE']
+df$yearWeek <- strftime(as.POSIXct(df[,'CRASH_DATE'],format="%m/%d/%Y %r",tz="GMT"),format = "%Y-W%V")
+df$yearDay <- strftime(as.POSIXct(df[,'CRASH_DATE'],format="%m/%d/%Y %r",tz="GMT"),format = "%Y-%m-%d")
+data <- table(df$yearMonth)
+```
+
+```{r}
+ts = ts(data,frequency = 12 ,start = c(2021,1))
+tsdisplay(ts)
+```
+
+```{r}
+weekly <- subset(as.data.frame(table(df$yearWeek)),Var1 != '2020-W53')
+rownames(weekly) <- weekly$Var1
+weekly <- weekly['Freq']
+```
+
+```{r}
+ts = ts(weekly,frequency = 52 ,start = c(2021,1))
+tsdisplay(ts)
+tsdisplay(diff(ts,differences = 1,lag = 52))
+```
+
+```{r}
+Box.test(ts,type = 'Ljung')
+mod <- auto.arima(ts,seasonal = TRUE,trace = TRUE)
+summary(mod)
+```
+```{r}
+Daily <- subset(as.data.frame(table(df$yearDay)),Var1 != '2020-12-31')
+rownames(Daily) <- Daily$Var1
+Daily <- Daily['Freq']
+Daily <- ts(Daily,frequency = 365,start = c(2021,1))
+tsdisplay(Daily)
+tsdisplay(diff(Daily,differences = 1,lag = 7))
+```
+```{r}
+Box.test(Daily,type = 'Ljung')
+Box.test(diff(diff(diff(diff(diff(diff(diff(Daily,differences = 1,lag = 91),differences = 1,lag = 5),differences = 1,lag = 7),differences = 1,lag = 183),differences = 1,lag = 365),differences = 1,lag = 30),differences = 1,lag = 2),type = 'Ljung')
+adf.test(diff(diff(diff(diff(Daily,differences = 1,lag = 7),differences = 1,lag = 3),differences = 1,lag = 5),differences = 1,lag = 183))
+```
+```{r}
+tsdisplay(diff(diff(diff(diff(diff(diff(Daily,differences = 1,lag = 7),differences = 1,lag = 30),differences = 1,lag = 365),differences = 1,lag = 91),differences = 1,lag = 183)))
+```
+```{r}
+mod<- auto.arima(diff(diff(diff(diff(Daily,diffrences = 1,lag = 7),diffrences = 1,lag = 3),diffrences = 1,lag = 5),diffrences = 1,lag = 183))
+summary(mod)
+checkresiduals(mod)
+```
+```{r}
+mod <- stlm(msts(Daily,seasonal.periods = c(5,7,30,91,183,365)))
+accuracy(mod$fitted,Daily)
+plot(forecast(mod,h = 365))
+checkresiduals(mod$residuals)
+```
+```{r}
+mod <- diff(Daily,differences = 1)%>% msts(seasonal.periods = c(5,7,91,183,365))
+summary(mod)
+checkresiduals(mod)
+autoplot(mstl(mod))
+tsdisplay(diff(diff(diff(diff(Daily,diffrences = 1,lag = 7),diffrences = 1,lag = 3),diffrences = 1,lag = 5),diffrences = 1,lag = 183),lag.max = 360)
+tsdisplay(Daily[1:250])
+```
+```{r}
+periodogram_crashdata <- periodogram(Daily)
+round(periodogram_crashdata$spec/1e3,3)
+periodogram_crashdata$freq
+1/periodogram_crashdata$freq[179]
+1/periodogram_crashdata$freq[357]
+1/periodogram_crashdata$freq[265]
+```
+```{r}
+mod <- tbats(Daily,use.box.cox = FALSE,seasonal.periods = c(5,7,91,183,365),use.parallel = TRUE,num.cores = 7)
+f <- forecast(mod,h = 365)
+plot(f)
+checkresiduals(mod$errors)
+accuracy(mod$fitted.values,Daily)
+```
+```{r}
+DailyPro <- subset(as.data.frame(table(df$yearDay)),Var1 != '2020-12-31')
+colnames(DailyPro) <- c('ds','y')
+DailyPro
+```
+```{r}
+mod <- prophet(seasonality.mode = 'additive')
+mod <- add_seasonality(mod,'workday',5,fourier.order = 10)
+mod <- add_seasonality(mod,'Quaterly',91,fourier.order = 10)
+mod <- add_seasonality(mod,'HalfYearly',183,fourier.order = 10)
+mod <- add_seasonality(mod,'Month',30,fourier.order = 10)
+mod <- fit.prophet(mod,DailyPro)
+future <- make_future_dataframe(mod,periods = 365)
+forecast <- predict(mod, future)
+plot(mod, forecast)
+prophet_plot_components(mod, forecast)
+accuracy(forecast$yhat,Daily)
+checkresiduals(forecast$yhat[2:1220]-Daily[2:1220])
+prophet:::plot_yearly(mod)
+prophet:::plot_weekly(mod)
+```
+```{r}
+modn <- snaive(Daily)
+summary(modn)
+checkresiduals(modn)
+plot(forecast(modn,h = 365))
+```
+```{r}
+dec <- mstl(msts(Daily,seasonal.periods = c(5,7,91,183,365)))
+autoplot(dec)
+dec
+```
+```{r}
+plot(fourier(msts(Daily,seasonal.periods = c(5,7,91,183,365)),c(2,2,2,2,2),h = c(1220,1220,1220,1220,1220))[,'C2-365'],type = 'l')
+```
+```{r}
+mod <- auto.arima(Daily,xreg = fourier(msts(Daily,seasonal.periods = c(5,7,91,183,365)),c(2,3,3,5,7),h = c(1220,1220,1220,1220,1220)),seasonal = TRUE,trace = TRUE)
+checkresiduals(mod$residuals)
+plot(forecast(mod,h = 365,xreg = fourier(msts(Daily,seasonal.periods = c(5,7,91,183,365)),c(2,3,3,5,7),h = c(365,365,365,365,365))))
+```
+```{r}
+mod <- auto.arima(Daily,xreg = fourier(msts(Daily,seasonal.periods = c(5,7,91,183,365)),c(2,3,3,5,7),h = c(1220,1220,1220,1220,1220)),seasonal = TRUE,trace = TRUE)
+checkresiduals(mod$residuals)
+preds <- forecast(mod,h = 31,xreg = fourier(msts(Daily,seasonal.periods = c(5,7,91,183,365)),c(2,3,3,5,7),h = c(31,365,365,365,365)))
+plot(preds)
+autoplot(preds$mean)
+```
+```{r}
+summary(mod)
+#(2,3,3,5,7)
+```
+```{r}
+#inj <-  aggregate(INJURIES_TOTAL~yearDay,df,sum)
+inj <- read.csv('Final_traffic_data.csv')
+inj$yearDay <- ymd(paste(inj$YEAR, inj$CRASH_MONTH, inj$DAY, sep = "-"))
+#inj<- subset(as.data.frame(inj),yearDay != '2020-12-31')
+rownames(inj)<- inj$yearDay
+inj <- inj['INJURIES_TOTAL']
+injts <- ts(inj,frequency = 365,start = c(2021,1))
+```
+```{r}
+xreg = fourier(msts(injts,seasonal.periods = c(7,365)),c(3,8),h = c(1216,1220,1220,1220,1220))
+xreg = as.data.frame(xreg)
+xreg$daily = Daily[1:1216,'Freq']
+modreg <- auto.arima(inj,xreg = as.matrix(xreg),seasonal = FALSE,trace = TRUE)
+summary(modreg)
+#checkresiduals(modreg$residuals)
+xRegPred = fourier(msts(injts,seasonal.periods = c(7,365)),c(3,8),h = c(365,365,365,365,365))
+xRegPred = as.data.frame(xRegPred)
+xRegPred$daily = forecast(mod,h = 365,xreg = fourier(msts(Daily,seasonal.periods = c(5,7,91,183,365)),c(2,3,3,5,7),h = c(365,365,365,365,365)))$mean
+plot(forecast(modreg,h = 365,xreg = as.matrix(xRegPred)))
+```
+```{r}
+xreg = fourier(msts(injts,seasonal.periods = c(7,365)),c(3,8),h = c(1216,1220,1220,1220,1220))
+xreg = as.data.frame(xreg)
+xreg$daily = Daily[1:1216,'Freq']
+modreg <- auto.arima(inj,xreg = as.matrix(xreg),seasonal = FALSE,trace = TRUE)
+summary(modreg)
+#checkresiduals(modreg$residuals)
+xRegPred = fourier(msts(injts,seasonal.periods = c(7,365)),c(3,8),h = c(31,365,365,365,365))
+xRegPred = as.data.frame(xRegPred)
+xRegPred$daily = forecast(mod,h = 31,xreg = fourier(msts(Daily,seasonal.periods = c(5,7,91,183,365)),c(2,3,3,5,7),h = c(31,365,365,365,365)))$mean
+preds <- forecast(modreg,h = 365,xreg = as.matrix(xRegPred))
+plot(forecast(modreg,h = 365,xreg = as.matrix(xRegPred)))
+autoplot(preds$mean)
+```
+```{r}
+vardf = data.frame(injts)
+vardf$daily = Daily
+vardf$INJURIES_TOTAL = ts(vardf$INJURIES_TOTAL,frequency(365))
+```
+```{r}
+exog =fourier(msts(injts,seasonal.periods = c(365,7)),c(3,8),h = c(1216))
+colnames(exog)<-c('S1_365','C1_365','S2_365','C2_365','S3_365','C3_365','S4_365','C4_365','S5_365','C5_365','S6_365','C6_365','S7_365','C7_365','S8_365','C8_365','S1_7','C1_7','S2_7','C2_7','S3_7','C3_7')
+modreg <- VAR(vardf, p = 10,type = 'both',exog = exog)
+summary(modreg)
+checkresiduals(modreg$varresult$INJURIES_TOTAL$residuals)
+checkresiduals(modreg$varresult$daily$residuals)
+dumvar <- fourier(msts(injts,seasonal.periods = c(365,7)),c(3,8),h = c(365))
+colnames(dumvar)<-c('S1_365','C1_365','S2_365','C2_365','S3_365','C3_365','S4_365','C4_365','S5_365','C5_365','S6_365','C6_365','S7_365','C7_365','S8_365','C8_365','S1_7','C1_7','S2_7','C2_7','S3_7','C3_7')
+preds = predict(modreg,n.ahead = 365,dumvar = dumvar)
+plot(preds)
+tsdisplay(preds$fcst$INJURIES_TOTAL)
+tsdisplay(preds$fcst$daily)
+accuracy(modreg$varresult$INJURIES_TOTAL)
+accuracy(modreg$varresult$daily)
+```
+
+```{r}
+#fourier(msts(injts,seasonal.periods = c(5,7)),c(2,3),h = c(365,365))
+```
+```{r}
+#fourier(msts(injts,seasonal.periods = c(5,7)),c(2,3),h = c(1220,1220))
+```
+```{r}
+#inj <-  aggregate(INJURIES_TOTAL~yearDay,df,sum,na.rm = TRUE)
+inj <- read.csv('Final_traffic_data.csv')
+#inj<- subset(as.data.frame(inj),yearDay != '2020-12-31')
+injPro<- inj['INJURIES_TOTAL']
+injPro$ds <- ymd(paste(inj$YEAR, inj$CRASH_MONTH, inj$DAY, sep = "-"))
+#injPro <- injPro[,c('INJURIES_TOTAL','Daily')]
+#inj<- subset(as.data.frame(inj),yearDay != '2020-12-31')
+colnames(injPro) <- c('y','ds')
+injPro$daily <- Daily[1:1216,'Freq']
+injPro <- cbind(injPro,as.data.frame(fourier(msts(injts,seasonal.periods = c(7,365)),c(3,8),h = c(1216,1216))))
+```
+```{r}
+colnames(injPro) <- c('y','ds','d','S1_365','C1_365','S2_365','C2_365','S3_365','C3_365','S4_365','C4_365','S5_365','C5_365','S6_365','C6_365','S7_365','C7_365','S8_365','C8_365','S1_7','C1_7','S2_7','C2_7','S3_7','C3_7')
+```
+```{r}
+modreg <- prophet(seasonality.mode = 'additive',yearly.seasonality = 8,weekly.seasonality = TRUE,growth='flat')
+modreg <- add_regressor(modreg,'d')
+modreg <- add_regressor(modreg,'S1_365')
+modreg <- add_regressor(modreg,'C1_365')
+modreg <- add_regressor(modreg,'S2_365')
+modreg <- add_regressor(modreg,'C2_365')
+modreg <- add_regressor(modreg,'S3_365')
+modreg <- add_regressor(modreg,'C3_365')
+modreg <- add_regressor(modreg,'S4_365')
+modreg <- add_regressor(modreg,'C4_365')
+modreg <- add_regressor(modreg,'S5_365')
+modreg <- add_regressor(modreg,'C5_365')
+modreg <- add_regressor(modreg,'S6_365')
+modreg <- add_regressor(modreg,'C6_365')
+modreg <- add_regressor(modreg,'S7_365')
+modreg <- add_regressor(modreg,'C7_365')
+modreg <- add_regressor(modreg,'S8_365')
+modreg <- add_regressor(modreg,'C8_365')
+modreg <- add_regressor(modreg,'S1_7')
+modreg <- add_regressor(modreg,'C1_7')
+modreg <- add_regressor(modreg,'S2_7')
+modreg <- add_regressor(modreg,'C2_7')
+modreg <- add_regressor(modreg,'S3_7')
+modreg <- add_regressor(modreg,'C3_7')
+modreg <- fit.prophet(modreg,injPro)
+```
+
+```{r}
+future <- make_future_dataframe(modreg,periods = 365)
+predsdaily<-forecast(mod,h = 365,xreg = fourier(msts(Daily,seasonal.periods = c(5,7,91,183,365)),c(2,3,3,5,7),h = c(365,365,365,365,365)))$mean
+predsdaily<-as.data.frame(predsdaily)
+colnames(predsdaily) <- c('Freq')
+ddf <- as.data.frame(Daily[1:1216])
+colnames(ddf) <- c('Freq')
+predsdaily <- rbind(ddf,predsdaily)
+future <- cbind(future,predsdaily)
+future <- cbind(future,as.data.frame(fourier(msts(injts,seasonal.periods = c(365,7)),c(3,8),h = c(1581,1581))))
+colnames(future) <- c('ds','d','S1_365','C1_365','S2_365','C2_365','S3_365','C3_365','S4_365','C4_365','S5_365','C5_365','S6_365','C6_365','S7_365','C7_365','S8_365','C8_365','S1_7','C1_7','S2_7','C2_7','S3_7','C3_7')
+future
+forecast <- predict(modreg, future)
+plot(modreg, forecast,uncertainty = FALSE,)
+accuracy(forecast$yhat,injts)
+checkresiduals(forecast$yhat[1:1216]-injts[1:1216])
+```
+```{r}
+
+```
+
+
+
+
+
+
+
