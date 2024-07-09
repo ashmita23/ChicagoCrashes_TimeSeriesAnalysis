@@ -1,9 +1,3 @@
----
-title: "FinalEDA"
-author: "Aayush Verma"
-date: "2024-05-06"
-output: html_document
----
 
 ```{r setup}
 require('tseries')
